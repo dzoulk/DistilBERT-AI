@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+results/
+sentiment-model/
+*.log
+.cache/
+.pytest_cache/
+.git/
+tests/

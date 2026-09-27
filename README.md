@@ -68,6 +68,16 @@ pytest tests/ -v
 Requires a trained model at `./sentiment-model` (run `train.py` first), since
 `serve.py` loads it at import time.
 
+## Docker
+
+The image doesn't bake in the model weights — mount your trained
+`./sentiment-model` directory at runtime instead:
+
+```bash
+docker build -t imdb-sentiment .
+docker run -p 8000:8000 -v "$(pwd)/sentiment-model:/app/sentiment-model" imdb-sentiment
+```
+
 ## Resume bullet
 
 > Fine-tuned DistilBERT for binary sentiment classification on IMDB movie
