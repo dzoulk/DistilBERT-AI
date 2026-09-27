@@ -18,10 +18,10 @@ import torch
 from datasets import load_dataset
 from sklearn.metrics import accuracy_score, f1_score
 from transformers import (
-    AutoTokenizer,
     AutoModelForSequenceClassification,
-    TrainingArguments,
+    AutoTokenizer,
     Trainer,
+    TrainingArguments,
 )
 
 MODEL_NAME = "distilbert-base-uncased"
