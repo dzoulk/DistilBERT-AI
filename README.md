@@ -58,6 +58,16 @@ curl -X POST http://127.0.0.1:8000/predict \
 # {"label":"positive","confidence":0.99}
 ```
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
+
+Requires a trained model at `./sentiment-model` (run `train.py` first), since
+`serve.py` loads it at import time.
+
 ## Resume bullet
 
 > Fine-tuned DistilBERT for binary sentiment classification on IMDB movie
