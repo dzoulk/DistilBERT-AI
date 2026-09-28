@@ -25,9 +25,9 @@ def main():
     print("Loading IMDB dataset...")
     raw_datasets = load_dataset("stanfordnlp/imdb")
 
-    # Use the SAME subset sizes and seed as train.py so the comparison is fair.
-    train_dataset = raw_datasets["train"].shuffle(seed=42).select(range(4000))
-    test_dataset = raw_datasets["test"].shuffle(seed=42).select(range(1000))
+    # Full 25k/25k train/test split, matching train.py, for a fair comparison.
+    train_dataset = raw_datasets["train"]
+    test_dataset = raw_datasets["test"]
 
     X_train_text = train_dataset["text"]
     y_train = train_dataset["label"]

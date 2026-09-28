@@ -40,11 +40,10 @@ def main():
     print("Loading IMDB dataset...")
     raw_datasets = load_dataset("stanfordnlp/imdb")
 
-    # To keep training time reasonable on a laptop, we'll use a subset.
-    # Feel free to increase these numbers if your machine can handle it —
-    # more data generally means better accuracy, up to a point.
-    train_dataset = raw_datasets["train"].shuffle(seed=42).select(range(4000))
-    test_dataset = raw_datasets["test"].shuffle(seed=42).select(range(1000))
+    # Full 25k/25k train/test split. On a GPU this takes ~15-30 minutes for
+    # 2 epochs; on CPU only, expect several hours.
+    train_dataset = raw_datasets["train"]
+    test_dataset = raw_datasets["test"]
 
     # ------------------------------------------------------------------
     # 2. Tokenize the text

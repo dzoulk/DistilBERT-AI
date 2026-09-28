@@ -9,15 +9,16 @@ buys you.
 
 | Model | Accuracy | F1 |
 |---|---|---|
-| TF-IDF + Logistic Regression (baseline) | 83.9% | 0.839 |
-| DistilBERT (fine-tuned, 2 epochs) | **88.7%** | **0.888** |
+| TF-IDF + Logistic Regression (baseline) | 88.0% | 0.880 |
+| DistilBERT (fine-tuned, 2 epochs) | **91.3%** | **0.913** |
 
-Both models were trained/evaluated on the same 4,000-example train /
-1,000-example test subset (seed 42) for a fair comparison. Fine-tuning
-DistilBERT improves accuracy by ~5 points over the baseline — a
-transformer's contextual understanding (word order, negation, sarcasm cues)
-outperforms a bag-of-words approach, though the baseline is a strong,
-cheap-to-run comparison point.
+Both models were trained/evaluated on the full 25,000-example train /
+25,000-example test IMDB split for a fair comparison. Fine-tuning
+DistilBERT improves accuracy by ~3.3 points over the baseline. That gap is
+smaller than you'd see on a small subset — with enough data, a linear
+bag-of-words model gets surprisingly competitive — but DistilBERT's
+contextual understanding (word order, negation, sarcasm cues) still wins
+out, at the cost of a much heavier model to train and serve.
 
 ## Project structure
 
@@ -77,9 +78,3 @@ The image doesn't bake in the model weights — mount your trained
 docker build -t imdb-sentiment .
 docker run -p 8000:8000 -v "$(pwd)/sentiment-model:/app/sentiment-model" imdb-sentiment
 ```
-
-## Resume bullet
-
-> Fine-tuned DistilBERT for binary sentiment classification on IMDB movie
-> reviews, improving accuracy from 83.9% (TF-IDF + Logistic Regression
-> baseline) to 88.7% (F1: 0.888); served the model via a FastAPI REST endpoint.
