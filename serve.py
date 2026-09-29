@@ -1,5 +1,5 @@
 """
-Minimal FastAPI server exposing the fine-tuned sentiment model.
+Minimal FastAPI server exposing the fine-tuned crypto sentiment model.
 
 Run with:
     uvicorn serve:app --reload
@@ -7,7 +7,7 @@ Run with:
 Then test with:
     curl -X POST http://127.0.0.1:8000/predict \
          -H "Content-Type: application/json" \
-         -d '{"text": "This movie was absolutely wonderful, I loved it!"}'
+         -d '{"text": "Bitcoin just broke $100k, this is huge!"}'
 """
 
 import torch
@@ -16,8 +16,9 @@ from pydantic import BaseModel
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 MODEL_DIR = "./sentiment-model"
+MAX_LENGTH = 128  # must match train.py
 
-app = FastAPI(title="IMDB Sentiment Classifier")
+app = FastAPI(title="Crypto Tweet Sentiment Classifier")
 
 # Load the model once at startup, not on every request — loading a
 # transformer from disk is slow, so we keep it in memory.
@@ -44,7 +45,7 @@ def predict(request: ReviewRequest):
         request.text,
         return_tensors="pt",
         truncation=True,
-        max_length=256,
+        max_length=MAX_LENGTH,
         padding=True,
     ).to(device)
 

@@ -1,5 +1,5 @@
 """
-Baseline model: TF-IDF + Logistic Regression on the same IMDB data.
+Baseline model: TF-IDF + Logistic Regression on the same crypto tweets data.
 
 WHY WE DO THIS:
 Anyone can fine-tune a transformer and report "90% accuracy" — but that
@@ -8,26 +8,23 @@ the interview question: "why did you need a transformer instead of
 something simpler?" If the transformer doesn't meaningfully beat this,
 that's actually an interesting finding worth discussing too.
 
-TF-IDF (Term Frequency - Inverse Document Frequency) turns each review
+TF-IDF (Term Frequency - Inverse Document Frequency) turns each tweet
 into a vector of word-importance scores — no understanding of word order
 or context, just "which words appear, and how distinctively." Logistic
 Regression then draws a linear boundary between positive/negative based
 on those word scores.
 """
 
-from datasets import load_dataset
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 
+from data import load_crypto_sentiment_dataset
+
 
 def main():
-    print("Loading IMDB dataset...")
-    raw_datasets = load_dataset("stanfordnlp/imdb")
-
-    # Full 25k/25k train/test split, matching train.py, for a fair comparison.
-    train_dataset = raw_datasets["train"]
-    test_dataset = raw_datasets["test"]
+    print("Loading crypto tweets sentiment dataset...")
+    train_dataset, test_dataset = load_crypto_sentiment_dataset()
 
     X_train_text = train_dataset["text"]
     y_train = train_dataset["label"]

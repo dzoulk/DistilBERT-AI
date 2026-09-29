@@ -1,8 +1,8 @@
 """
-Fine-tune DistilBERT for binary sentiment classification on the IMDB dataset.
+Fine-tune DistilBERT for binary sentiment classification on crypto tweets.
 
 WHAT THIS SCRIPT DOES, CONCEPTUALLY:
-1. Loads the IMDB movie review dataset (25k train / 25k test, labeled pos/neg).
+1. Loads a Bitcoin-tweets sentiment dataset (real, noisy social media text).
 2. Loads a pretrained DistilBERT model + its tokenizer.
    - The tokenizer converts raw text into numeric IDs the model understands.
    - The model already "knows" English from pretraining on huge amounts of text;
@@ -15,7 +15,6 @@ WHAT THIS SCRIPT DOES, CONCEPTUALLY:
 
 import numpy as np
 import torch
-from datasets import load_dataset
 from sklearn.metrics import accuracy_score, f1_score
 from transformers import (
     AutoModelForSequenceClassification,
@@ -24,8 +23,12 @@ from transformers import (
     TrainingArguments,
 )
 
+from data import load_crypto_sentiment_dataset
+
 MODEL_NAME = "distilbert-base-uncased"
 OUTPUT_DIR = "./sentiment-model"
+MAX_LENGTH = 128  # tweets are short; no need for IMDB's 256-token budget
+
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -34,23 +37,15 @@ def main():
     # ------------------------------------------------------------------
     # 1. Load the dataset
     # ------------------------------------------------------------------
-    # The Hugging Face `datasets` library downloads and caches IMDB for us.
-    # Each example is a dict: {"text": "<review text>", "label": 0 or 1}
-    # label 0 = negative, label 1 = positive
-    print("Loading IMDB dataset...")
-    raw_datasets = load_dataset("stanfordnlp/imdb")
-
-    # Full 25k/25k train/test split. On a GPU this takes ~15-30 minutes for
-    # 2 epochs; on CPU only, expect several hours.
-    train_dataset = raw_datasets["train"]
-    test_dataset = raw_datasets["test"]
+    print("Loading crypto tweets sentiment dataset...")
+    train_dataset, test_dataset = load_crypto_sentiment_dataset()
 
     # ------------------------------------------------------------------
     # 2. Tokenize the text
     # ------------------------------------------------------------------
     # Transformers don't read raw text — they read sequences of integer
-    # token IDs. The tokenizer also truncates/pads reviews to a fixed
-    # length (256 tokens here) so they can be batched together.
+    # token IDs. The tokenizer also truncates/pads tweets to a fixed
+    # length so they can be batched together.
     print("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
@@ -59,7 +54,7 @@ def main():
             examples["text"],
             padding="max_length",
             truncation=True,
-            max_length=256,
+            max_length=MAX_LENGTH,
         )
 
     print("Tokenizing...")
@@ -93,7 +88,8 @@ def main():
     # ------------------------------------------------------------------
     # 5. Set training hyperparameters
     # ------------------------------------------------------------------
-    # batch_size: how many examples processed at once. Lower this (e.g. to 4)
+    # batch_size: how many examples processed at once. Tweets are short, so
+    # we can afford a bigger batch than IMDB's 256-token reviews. Lower this
     # if you get an out-of-memory error on CPU/small GPU.
     # num_train_epochs: how many full passes over the training data.
     # learning_rate: how big a step the optimizer takes each update —
@@ -101,8 +97,8 @@ def main():
     training_args = TrainingArguments(
         output_dir="./results",
         num_train_epochs=2,
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=32,
         learning_rate=2e-5,
         eval_strategy="epoch",
         save_strategy="epoch",
@@ -140,7 +136,7 @@ def main():
     print(f"Model saved to {OUTPUT_DIR}")
 
     # Save metrics to a file too, so you have a permanent record for your
-    # README / resume bullet.
+    # README.
     with open("metrics.txt", "w") as f:
         f.write(str(metrics))
 

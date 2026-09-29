@@ -23,15 +23,16 @@ import time
 import numpy as np
 import onnxruntime as ort
 import torch
-from datasets import load_dataset
 from onnxruntime.quantization import QuantType, quantize_dynamic
 from sklearn.metrics import accuracy_score, f1_score
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+from data import load_crypto_sentiment_dataset
+
 MODEL_DIR = "./sentiment-model"
 ONNX_PATH = "./sentiment-model.onnx"
 ONNX_QUANTIZED_PATH = "./sentiment-model-quantized.onnx"
-MAX_LENGTH = 256
+MAX_LENGTH = 128  # must match train.py
 EVAL_SUBSET_SIZE = 1000
 LATENCY_RUNS = 100
 
@@ -120,11 +121,12 @@ def main():
     onnx_session = ort.InferenceSession(ONNX_PATH, providers=["CPUExecutionProvider"])
     onnx_int8_session = ort.InferenceSession(ONNX_QUANTIZED_PATH, providers=["CPUExecutionProvider"])
 
-    print("Loading IMDB test subset for evaluation...")
-    test_dataset = load_dataset("stanfordnlp/imdb")["test"].shuffle(seed=42).select(range(EVAL_SUBSET_SIZE))
+    print("Loading crypto tweets test subset for evaluation...")
+    _, test_dataset = load_crypto_sentiment_dataset()
+    test_dataset = test_dataset.shuffle(seed=42).select(range(EVAL_SUBSET_SIZE))
     texts = test_dataset["text"]
     labels = test_dataset["label"]
-    sample_text = texts[0]
+    sample_text = "Bitcoin just broke $100k, this bull run is incredible! To the moon!"
 
     results = {}
 
@@ -158,7 +160,7 @@ def main():
     results["onnx_fp32"]["latency"] = measure_latency(lambda: onnx_predict_batch(onnx_session_1t, tokenizer, [sample_text]))
     results["onnx_int8"]["latency"] = measure_latency(lambda: onnx_predict_batch(onnx_int8_session_1t, tokenizer, [sample_text]))
 
-    print("\n=== Results (CPU, batch=1 latency, n={} eval examples) ===".format(EVAL_SUBSET_SIZE))
+    print(f"\n=== Results (CPU, batch=1 latency, n={EVAL_SUBSET_SIZE} eval examples) ===")
     header = f"{'Variant':<15}{'Accuracy':<10}{'F1':<10}{'Size (MB)':<12}{'p50 (ms)':<10}{'p95 (ms)':<10}"
     print(header)
     for name, r in results.items():
