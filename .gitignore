@@ -6,3 +6,5 @@ sentiment-model/
 *.log
 .cache/
 .pytest_cache/
+.ruff_cache/
+*.onnx

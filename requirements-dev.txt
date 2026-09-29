@@ -2,3 +2,5 @@
 pytest==9.1.1
 httpx==0.28.1
 ruff==0.16.9
+onnx==1.23.1
+onnxruntime==1.30.0

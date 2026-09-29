@@ -78,3 +78,18 @@ The image doesn't bake in the model weights — mount your trained
 docker build -t imdb-sentiment .
 docker run -p 8000:8000 -v "$(pwd)/sentiment-model:/app/sentiment-model" imdb-sentiment
 ```
+
+## Inference optimization
+
+```bash
+pip install -r requirements-dev.txt
+python optimize.py
+```
+
+Exports the fine-tuned model to ONNX and applies dynamic INT8 quantization,
+then benchmarks PyTorch fp32 vs. ONNX fp32 vs. ONNX int8 on accuracy, on-disk
+size, and CPU latency. Full results and methodology notes (including a
+benchmarking pitfall around ONNX Runtime's default multi-threading) are in
+[optimization_results.md](optimization_results.md). Headline result:
+quantization shrinks the model ~4x (256 MB → 64 MB) for a 1.1 point
+accuracy/F1 cost.
