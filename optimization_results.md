@@ -1,29 +1,30 @@
 # Inference optimization results
 
-CPU-only benchmark. Accuracy/F1 over 1000 test examples (batched,
-multi-threaded) — a shuffled subset of the test set, so these numbers differ
-slightly from the full 9,724-example evaluation in `metrics.txt`. Latency is
-single-threaded (intra_op_num_threads=1), batch size 1, 100 runs after 10
-warmup calls — this matches one request per worker process in a real
-deployment. The multi-threaded default made both ONNX variants look slower
-than plain PyTorch here, since per-call thread-pool spawn overhead dominated
-a batch-1 workload; single-threading removes that artifact.
+CPU-only benchmark. F1 over the full 1,607-example test set (batched,
+multi-threaded). Latency is single-threaded (intra_op_num_threads=1), batch
+size 1, 100 runs after 10 warmup calls — this matches one request per
+worker process in a real deployment. The multi-threaded default made both
+ONNX variants look slower than plain PyTorch here, since per-call
+thread-pool spawn overhead dominated a batch-1 workload; single-threading
+removes that artifact.
 
-| Variant | Accuracy | F1 | Size (MB) | p50 latency (ms) | p95 latency (ms) |
+| Variant | F1 (micro) | F1 (macro) | Size (MB) | p50 latency (ms) | p95 latency (ms) |
 |---|---|---|---|---|---|
-| PyTorch (fp32) | 0.6140 | 0.6961 | 256.1 | 587.83 | 633.12 |
-| ONNX Runtime (fp32) | 0.6140 | 0.6961 | 255.5 | 757.19 | 813.09 |
-| ONNX Runtime (int8, dynamic quantized) | 0.6110 | 0.6963 | 64.2 | 309.80 | 408.30 |
+| PyTorch (fp32) | 0.6240 | 0.6017 | 256.1 | 925.44 | 1031.13 |
+| ONNX Runtime (fp32) | 0.6240 | 0.6017 | 255.5 | 872.71 | 1035.99 |
+| ONNX Runtime (int8, dynamic quantized) | 0.6269 | 0.6046 | 64.2 | 420.90 | 451.37 |
 
 **Takeaways:**
-- Dynamic INT8 quantization shrinks the model **~4x** (256 MB → 64 MB) for a
-  **0.3 point** accuracy drop (F1 is essentially unchanged: 0.6961 → 0.6963).
-- Quantization also delivers a real **~1.9x** single-threaded latency
-  improvement (p50 587.83ms → 309.80ms). An earlier run on a different
-  fine-tuned model showed much noisier latency numbers (an 8x p50/p95
-  spread) — this run's p50/p95 are close enough together to trust the
-  speedup as real rather than measurement noise, but treat single-run
-  laptop CPU benchmarks as directional, not precise.
-- Plain ONNX Runtime (fp32, no quantization) is *slower* than PyTorch on
-  CPU here, again — the win comes specifically from quantization, not from
-  switching runtimes.
+- Dynamic INT8 quantization shrinks the model **~4x** (256 MB → 64 MB) with
+  **no measurable F1 cost** this time — quantized F1 is marginally higher
+  (0.6046 vs. 0.6017 macro), which is noise on a 1,607-example test set and
+  a coarse 0.5 per-category threshold, not a real improvement from
+  quantizing. Unlike the two earlier sentiment-classification versions of
+  this project, quantization was essentially free here.
+- Quantization delivers a real **~2.2x** single-threaded latency
+  improvement (p50 925ms → 421ms), consistent with the ~1.9-2x speedups
+  measured on two previous fine-tuned models in this project's earlier
+  iterations.
+- Plain ONNX Runtime (fp32, no quantization) is close to PyTorch on CPU
+  here (873ms vs. 925ms) — as in every prior run of this benchmark, the win
+  comes specifically from quantization, not from switching runtimes.

@@ -1,28 +1,49 @@
 """
-Shared dataset loading for the crypto Twitter sentiment task.
+Shared dataset loading for the unfair Terms-of-Service clause detection task.
 
-Source: cvnberk/bitcoin_tweets_sentiment_kaggle (a re-upload of a Kaggle
-Bitcoin tweets dataset). Real, noisy social media text — spam, promotional
-posts, non-English tweets, and all. Labels are Positive/Negative; the
-dataset's own docs don't specify how they were generated originally, and
-these kinds of scraped Twitter datasets are frequently auto-labeled with a
-lexicon-based tool (e.g. VADER/TextBlob polarity) rather than human-annotated.
-Treat these as a reasonable proxy for sentiment, not ground truth.
+Source: coastalcph/lex_glue, config "unfair_tos" - part of the LexGLUE
+benchmark (Chalkidis et al.). Real clauses pulled from actual ToS documents
+(Spotify, Facebook, Tinder, and others), annotated by legal researchers as
+fair or unfair, with unfair clauses further tagged into one or more of 8
+categories. This is a MULTI-LABEL task: a clause can belong to zero
+categories (fair), one, or several at once.
+
+Heavily imbalanced: most clauses are fair (empty label list), and some
+categories (e.g. "Content removal", "Choice of law") have very few positive
+examples relative to others (e.g. "Arbitration", "Unilateral change").
 """
 
-DATASET_NAME = "cvnberk/bitcoin_tweets_sentiment_kaggle"
-LABEL_MAP = {"Negative": 0, "Positive": 1}
+CATEGORIES = [
+    "Limitation of liability",
+    "Unilateral termination",
+    "Unilateral change",
+    "Content removal",
+    "Contract by using",
+    "Choice of law",
+    "Jurisdiction",
+    "Arbitration",
+]
+NUM_LABELS = len(CATEGORIES)
 
 
-def load_crypto_sentiment_dataset():
-    from datasets import load_dataset
+def _multi_hot(example):
+    vector = [0.0] * NUM_LABELS
+    for label_idx in example["labels"]:
+        vector[label_idx] = 1.0
+    return {"labels": vector}
 
-    raw = load_dataset(DATASET_NAME)
 
-    def clean_split(split):
-        split = split.filter(lambda ex: ex["Sentiment"] in LABEL_MAP)
-        return split.map(lambda ex: {"label": LABEL_MAP[ex["Sentiment"]]})
+def load_unfair_tos_dataset():
+    from datasets import Sequence, Value, load_dataset
 
-    train = clean_split(raw["train"])
-    test = clean_split(raw["test"])
+    raw = load_dataset("coastalcph/lex_glue", "unfair_tos")
+    # Overwrites the raw "labels" column (a list of category indices) with a
+    # multi-hot float vector - the format both the sklearn baseline and the
+    # HF Trainer's multi-label loss expect. map() alone keeps the original
+    # column's List(ClassLabel) (integer) schema even though we return
+    # floats, which silently casts them back to int and breaks
+    # BCEWithLogitsLoss ("Float can't be cast to Long") - cast_column forces
+    # the schema to match what we actually produced.
+    train = raw["train"].map(_multi_hot).cast_column("labels", Sequence(Value("float32")))
+    test = raw["test"].map(_multi_hot).cast_column("labels", Sequence(Value("float32")))
     return train, test

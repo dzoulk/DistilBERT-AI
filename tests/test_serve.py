@@ -16,30 +16,39 @@ def test_health():
     assert response.json()["status"] == "ok"
 
 
-def test_predict_positive_tweet():
+def test_predict_flags_arbitration_clause():
     response = client.post(
         "/predict",
-        json={"text": "Bitcoin just broke $100k, this bull run is incredible! To the moon!"},
+        json={
+            "text": (
+                "You agree that any dispute arising out of these terms will be "
+                "resolved through binding arbitration, and you waive any right "
+                "to a jury trial or to participate in a class action."
+            )
+        },
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["label"] == "positive"
-    assert 0.0 <= body["confidence"] <= 1.0
+    assert body["is_unfair"] is True
+    flagged = {c["category"] for c in body["categories"] if c["flagged"]}
+    assert "Arbitration" in flagged
 
 
-def test_predict_negative_tweet():
-    # The model is heavily biased toward "positive" (see README: 90% recall
-    # on positive vs. 38% on negative), so most obviously-negative examples
-    # get misclassified. This one is a rare example that the model actually
-    # gets right, found by testing several candidates directly against it.
+def test_predict_does_not_flag_fair_clause():
     response = client.post(
         "/predict",
-        json={"text": "Scam alert: this crypto project is a total fraud, avoid at all costs."},
+        json={"text": "You may cancel your subscription at any time from your account settings."},
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["label"] == "negative"
-    assert 0.0 <= body["confidence"] <= 1.0
+    assert body["is_unfair"] is False
+
+
+def test_predict_returns_all_categories():
+    response = client.post("/predict", json={"text": "This is a short clause."})
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["categories"]) == 8
 
 
 def test_predict_rejects_missing_text():

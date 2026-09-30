@@ -1,51 +1,79 @@
-# Crypto Tweet Sentiment Classification: DistilBERT vs. TF-IDF Baseline
+# Unfair ToS Clause Detection with DistilBERT
 
-Fine-tunes DistilBERT for binary sentiment classification (positive/negative)
-on real Bitcoin-related tweets, compares it against a classical TF-IDF +
-Logistic Regression baseline, and benchmarks ONNX export + INT8 quantization
-for CPU inference.
+Fine-tunes DistilBERT to flag unfair clauses in Terms-of-Service documents
+(arbitration requirements, unilateral changes, content removal rights, and
+more), compares it against a classical TF-IDF + Logistic Regression
+baseline, and benchmarks ONNX export + INT8 quantization for CPU inference.
 
 ## Dataset
 
-[`cvnberk/bitcoin_tweets_sentiment_kaggle`](https://huggingface.co/datasets/cvnberk/bitcoin_tweets_sentiment_kaggle)
-— a Kaggle-sourced re-upload of ~87k real Bitcoin tweets, labeled
-Positive/Negative (77,788 train / 9,724 test after dropping a handful of
-stray "Neutral" rows). Real social media text: spam, promotional posts,
-non-English tweets, hashtags, links, and all — much noisier than a curated
-movie-review dataset like IMDB.
+[`coastalcph/lex_glue`](https://huggingface.co/datasets/coastalcph/lex_glue)
+(`unfair_tos` config) — part of the [LexGLUE benchmark](https://arxiv.org/abs/2110.00976),
+built from real ToS documents (Spotify, Facebook, Tinder, and others),
+annotated by legal researchers. 5,532 train / 1,607 test clauses. Unlike the
+sentiment datasets this project started with, these labels are
+**human-annotated by legal experts**, not scraped or auto-generated.
 
-**Caveat worth being upfront about:** the dataset's own documentation
-doesn't say how the labels were generated, and these kinds of scraped
-Twitter/crypto sentiment datasets are frequently auto-labeled with a
-lexicon-based tool (e.g. VADER/TextBlob polarity) rather than human-annotated.
-Treat the numbers below as measuring agreement with those labels, not
-"true" sentiment accuracy.
+This is a **multi-label** problem: a clause can match zero, one, or several
+of 8 unfair categories at once (a clause with no matches is "fair"):
+
+`Limitation of liability`, `Unilateral termination`, `Unilateral change`,
+`Content removal`, `Contract by using`, `Choice of law`, `Jurisdiction`,
+`Arbitration`
+
+It's also **heavily imbalanced** — most clauses are fair, and in the test
+set, category support ranges from 38 examples (Limitation of liability) down
+to just 7 (Arbitration).
 
 ## Results
 
-| Model | Accuracy | F1 |
+| Model | F1 (micro) | F1 (macro) |
 |---|---|---|
-| TF-IDF + Logistic Regression (baseline) | 64.4% | 0.696 |
-| DistilBERT (fine-tuned, 2 epochs) | **65.2%** | **0.729** |
+| TF-IDF + One-vs-Rest Logistic Regression (`class_weight="balanced"`) | 0.593 | 0.600 |
+| DistilBERT (unweighted loss) | 0.620 | **0.454** |
+| DistilBERT (raw inverse-frequency `pos_weight`) | 0.571 | 0.555 |
+| DistilBERT (sqrt-dampened `pos_weight`) | **0.624** | **0.602** |
 
-The transformer's edge here is much smaller than on IMDB (where it beat the
-baseline by ~3.3 points) — only 0.8 points of accuracy. Digging into why:
-both models are biased toward predicting "positive". DistilBERT's confusion
-matrix shows it catches 90% of actual positive tweets but only 38% of actual
-negative ones (precision/recall of 0.78/0.38 on the negative class). Likely
-causes: noisy/inconsistent auto-generated labels cap how much any model can
-learn, and short, jargon-heavy tweets (hype language like "to the moon"
-appearing in both genuinely positive posts and sarcastic or spam ones) give
-a transformer less contextual signal to work with than a full-length movie
-review. This is a more honest, more interesting result than a clean win —
-on messy real-world social data, the theoretical advantage of a transformer
-doesn't automatically show up.
+**Micro F1** aggregates true/false positives across all 8 categories before
+computing F1 — it's the metric LexGLUE itself reports, and common categories
+dominate it. **Macro F1** averages each category's F1 equally, so it's much
+more sensitive to how the model does on the rarest ones.
+
+**What actually happened, in order:**
+
+1. The baseline used `class_weight="balanced"` in `LogisticRegression`
+   from the start, since ignoring class imbalance in a linear model is an
+   obvious mistake. DistilBERT's default multi-label loss
+   (`BCEWithLogitsLoss`, no weighting) got no such correction — and it
+   showed: DistilBERT beat the baseline on micro F1 but macro F1 collapsed
+   to 0.454, well below the baseline's 0.600. It had essentially given up on
+   the rarest categories, since they contribute almost nothing to
+   unweighted loss.
+2. The standard fix is `pos_weight` per category
+   (`# negative / # positive`) in `BCEWithLogitsLoss` — the multi-label
+   equivalent of `class_weight="balanced"`. Applying it raw overcorrected
+   badly: for Arbitration (~24 positive examples in training), the weight
+   worked out to 200+, and the model started flagging clauses as Arbitration
+   about 5x too often (precision 0.18 against 7 true positives in test).
+   Both micro and macro F1 got *worse* (0.571 / 0.555).
+3. Dampening the weight with a square root
+   (`sqrt(# negative / # positive)`) fixed it: DistilBERT finally beat the
+   baseline on both metrics (0.624 / 0.602), though only narrowly on macro
+   F1. Per-category, it clearly wins on "Limitation of liability" and
+   "Contract by using", is competitive elsewhere, and is still notably weak
+   on Arbitration (precision 0.16 — better than the raw-weight version, but
+   still overcalling this rarest category more than 5x).
+
+The takeaway isn't "the transformer wins" — it's that a naive multi-label
+setup actively loses to a properly-weighted linear baseline, and getting a
+fair comparison took two rounds of the same fix and a real look at where it
+was still failing.
 
 ## Project structure
 
-- `data.py` — shared dataset loading/cleaning for the crypto tweets data
-- `baseline.py` — TF-IDF + Logistic Regression baseline
-- `train.py` — fine-tunes `distilbert-base-uncased`, saves to `./sentiment-model`
+- `data.py` — loads the dataset and builds the multi-hot label vectors
+- `baseline.py` — TF-IDF + One-vs-Rest Logistic Regression baseline
+- `train.py` — fine-tunes `distilbert-base-uncased` with a class-weighted multi-label loss, saves to `./sentiment-model`
 - `serve.py` — FastAPI endpoint serving the fine-tuned model
 - `optimize.py` — ONNX export, INT8 quantization, and inference benchmarking
 - `requirements.txt` — dependencies
@@ -78,9 +106,30 @@ Test the API:
 ```bash
 curl -X POST http://127.0.0.1:8000/predict \
      -H "Content-Type: application/json" \
-     -d '{"text": "Bitcoin just broke $100k, this bull run is incredible!"}'
-# {"label":"positive","confidence":0.98}
+     -d '{"text": "You agree to resolve any dispute through binding arbitration and waive your right to a jury trial."}'
 ```
+
+```json
+{
+  "is_unfair": true,
+  "categories": [
+    {"category": "Limitation of liability", "probability": 0.02, "flagged": false},
+    {"category": "Unilateral termination", "probability": 0.01, "flagged": false},
+    {"category": "Unilateral change", "probability": 0.03, "flagged": false},
+    {"category": "Content removal", "probability": 0.01, "flagged": false},
+    {"category": "Contract by using", "probability": 0.05, "flagged": false},
+    {"category": "Choice of law", "probability": 0.04, "flagged": false},
+    {"category": "Jurisdiction", "probability": 0.06, "flagged": false},
+    {"category": "Arbitration", "probability": 0.91, "flagged": true}
+  ]
+}
+```
+
+The per-category flag threshold is a runtime environment variable
+(`FLAG_THRESHOLD`, default 0.5) rather than hardcoded — how aggressively to
+flag depends on whether missed unfair clauses or false alarms cost more
+downstream, which this repo doesn't have a real use case to optimize
+against.
 
 ## Tests
 
@@ -98,8 +147,8 @@ The image doesn't bake in the model weights — mount your trained
 `./sentiment-model` directory at runtime instead:
 
 ```bash
-docker build -t crypto-sentiment .
-docker run -p 8000:8000 -v "$(pwd)/sentiment-model:/app/sentiment-model" crypto-sentiment
+docker build -t unfair-tos-classifier .
+docker run -p 8000:8000 -v "$(pwd)/sentiment-model:/app/sentiment-model" unfair-tos-classifier
 ```
 
 ## Inference optimization
@@ -110,9 +159,7 @@ python optimize.py
 ```
 
 Exports the fine-tuned model to ONNX and applies dynamic INT8 quantization,
-then benchmarks PyTorch fp32 vs. ONNX fp32 vs. ONNX int8 on accuracy, on-disk
+then benchmarks PyTorch fp32 vs. ONNX fp32 vs. ONNX int8 on F1, on-disk
 size, and CPU latency. Full results and methodology notes (including a
 benchmarking pitfall around ONNX Runtime's default multi-threading) are in
-[optimization_results.md](optimization_results.md). Headline result:
-quantization shrinks the model ~4x (256 MB → 64 MB) with a ~1.9x latency
-improvement, for only a 0.3 point accuracy cost.
+[optimization_results.md](optimization_results.md).

@@ -1,5 +1,5 @@
 """
-Minimal FastAPI server exposing the fine-tuned crypto sentiment model.
+Minimal FastAPI server exposing the fine-tuned unfair-ToS-clause classifier.
 
 Run with:
     uvicorn serve:app --reload
@@ -7,18 +7,29 @@ Run with:
 Then test with:
     curl -X POST http://127.0.0.1:8000/predict \
          -H "Content-Type: application/json" \
-         -d '{"text": "Bitcoin just broke $100k, this is huge!"}'
+         -d '{"text": "We may terminate your account at any time, for any reason, without notice."}'
 """
+
+import os
 
 import torch
 from fastapi import FastAPI
 from pydantic import BaseModel
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+from data import CATEGORIES
+
 MODEL_DIR = "./sentiment-model"
 MAX_LENGTH = 128  # must match train.py
 
-app = FastAPI(title="Crypto Tweet Sentiment Classifier")
+# Each category gets an independent yes/no decision (see train.py) - this is
+# the probability cutoff for "flagged". Lower it to flag more aggressively
+# (higher recall, more false positives); raise it to flag fewer clauses
+# (higher precision, more missed ones). No single "correct" value without a
+# real downstream cost model for missed vs. over-flagged clauses.
+FLAG_THRESHOLD = float(os.environ.get("FLAG_THRESHOLD", "0.5"))
+
+app = FastAPI(title="Unfair ToS Clause Classifier")
 
 # Load the model once at startup, not on every request — loading a
 # transformer from disk is slow, so we keep it in memory.
@@ -27,20 +38,24 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
 model = AutoModelForSequenceClassification.from_pretrained(MODEL_DIR).to(device)
 model.eval()  # inference mode: disables dropout etc.
 
-LABELS = {0: "negative", 1: "positive"}
 
-
-class ReviewRequest(BaseModel):
+class ClauseRequest(BaseModel):
     text: str
 
 
+class CategoryScore(BaseModel):
+    category: str
+    probability: float
+    flagged: bool
+
+
 class PredictionResponse(BaseModel):
-    label: str
-    confidence: float
+    is_unfair: bool
+    categories: list[CategoryScore]
 
 
 @app.post("/predict", response_model=PredictionResponse)
-def predict(request: ReviewRequest):
+def predict(request: ClauseRequest):
     inputs = tokenizer(
         request.text,
         return_tensors="pt",
@@ -51,16 +66,23 @@ def predict(request: ReviewRequest):
 
     with torch.no_grad():  # no need to track gradients for inference
         outputs = model(**inputs)
-        probs = torch.softmax(outputs.logits, dim=-1)[0]
-        predicted_class = int(torch.argmax(probs).item())
-        confidence = float(probs[predicted_class].item())
+        probs = torch.sigmoid(outputs.logits)[0]  # independent per-category probabilities
+
+    categories = [
+        CategoryScore(
+            category=name,
+            probability=round(float(probs[i].item()), 4),
+            flagged=bool(probs[i].item() >= FLAG_THRESHOLD),
+        )
+        for i, name in enumerate(CATEGORIES)
+    ]
 
     return PredictionResponse(
-        label=LABELS[predicted_class],
-        confidence=round(confidence, 4),
+        is_unfair=any(c.flagged for c in categories),
+        categories=categories,
     )
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "device": device}
+    return {"status": "ok", "device": device, "flag_threshold": FLAG_THRESHOLD}

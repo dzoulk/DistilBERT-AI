@@ -24,16 +24,16 @@ import numpy as np
 import onnxruntime as ort
 import torch
 from onnxruntime.quantization import QuantType, quantize_dynamic
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import f1_score
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-from data import load_crypto_sentiment_dataset
+from data import load_unfair_tos_dataset
 
 MODEL_DIR = "./sentiment-model"
 ONNX_PATH = "./sentiment-model.onnx"
 ONNX_QUANTIZED_PATH = "./sentiment-model-quantized.onnx"
 MAX_LENGTH = 128  # must match train.py
-EVAL_SUBSET_SIZE = 1000
+DECISION_THRESHOLD = 0.5
 LATENCY_RUNS = 100
 
 
@@ -73,7 +73,8 @@ def pytorch_predict_batch(model, tokenizer, texts):
     inputs = tokenizer(texts, return_tensors="pt", padding="max_length", truncation=True, max_length=MAX_LENGTH)
     with torch.no_grad():
         logits = model(**inputs).logits
-    return np.argmax(logits.numpy(), axis=-1)
+    probs = 1 / (1 + np.exp(-logits.numpy()))
+    return (probs >= DECISION_THRESHOLD).astype(int)
 
 
 def onnx_predict_batch(session, tokenizer, texts):
@@ -82,7 +83,8 @@ def onnx_predict_batch(session, tokenizer, texts):
         ["logits"],
         {"input_ids": inputs["input_ids"], "attention_mask": inputs["attention_mask"]},
     )[0]
-    return np.argmax(logits, axis=-1)
+    probs = 1 / (1 + np.exp(-logits))
+    return (probs >= DECISION_THRESHOLD).astype(int)
 
 
 def measure_latency(predict_one_fn, warmup=10, runs=LATENCY_RUNS):
@@ -97,14 +99,15 @@ def measure_latency(predict_one_fn, warmup=10, runs=LATENCY_RUNS):
     return {"p50_ms": float(np.percentile(times, 50)), "p95_ms": float(np.percentile(times, 95))}
 
 
-def evaluate_accuracy(predict_batch_fn, texts, labels, batch_size=32):
+def evaluate_multilabel(predict_batch_fn, texts, labels, batch_size=32):
     predictions = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
         predictions.extend(predict_batch_fn(batch))
+    predictions = np.array(predictions)
     return {
-        "accuracy": accuracy_score(labels, predictions),
-        "f1": f1_score(labels, predictions),
+        "f1_micro": f1_score(labels, predictions, average="micro", zero_division=0),
+        "f1_macro": f1_score(labels, predictions, average="macro", zero_division=0),
     }
 
 
@@ -121,25 +124,24 @@ def main():
     onnx_session = ort.InferenceSession(ONNX_PATH, providers=["CPUExecutionProvider"])
     onnx_int8_session = ort.InferenceSession(ONNX_QUANTIZED_PATH, providers=["CPUExecutionProvider"])
 
-    print("Loading crypto tweets test subset for evaluation...")
-    _, test_dataset = load_crypto_sentiment_dataset()
-    test_dataset = test_dataset.shuffle(seed=42).select(range(EVAL_SUBSET_SIZE))
+    print("Loading unfair ToS test set for evaluation...")
+    _, test_dataset = load_unfair_tos_dataset()
     texts = test_dataset["text"]
-    labels = test_dataset["label"]
-    sample_text = "Bitcoin just broke $100k, this bull run is incredible! To the moon!"
+    labels = np.array(test_dataset["labels"])
+    sample_text = "We may terminate your account at any time, for any reason, without notice."
 
     results = {}
 
-    print("Evaluating PyTorch fp32 accuracy...")
-    results["pytorch_fp32"] = evaluate_accuracy(lambda b: pytorch_predict_batch(pt_model, tokenizer, b), texts, labels)
+    print("Evaluating PyTorch fp32...")
+    results["pytorch_fp32"] = evaluate_multilabel(lambda b: pytorch_predict_batch(pt_model, tokenizer, b), texts, labels)
     results["pytorch_fp32"]["size_mb"] = dir_size_mb(MODEL_DIR)
 
-    print("Evaluating ONNX fp32 accuracy...")
-    results["onnx_fp32"] = evaluate_accuracy(lambda b: onnx_predict_batch(onnx_session, tokenizer, b), texts, labels)
+    print("Evaluating ONNX fp32...")
+    results["onnx_fp32"] = evaluate_multilabel(lambda b: onnx_predict_batch(onnx_session, tokenizer, b), texts, labels)
     results["onnx_fp32"]["size_mb"] = file_size_mb(ONNX_PATH)
 
-    print("Evaluating ONNX int8 accuracy...")
-    results["onnx_int8"] = evaluate_accuracy(lambda b: onnx_predict_batch(onnx_int8_session, tokenizer, b), texts, labels)
+    print("Evaluating ONNX int8...")
+    results["onnx_int8"] = evaluate_multilabel(lambda b: onnx_predict_batch(onnx_int8_session, tokenizer, b), texts, labels)
     results["onnx_int8"]["size_mb"] = file_size_mb(ONNX_QUANTIZED_PATH)
 
     # Latency is measured separately, single-threaded (intra_op_num_threads=1),
@@ -160,16 +162,16 @@ def main():
     results["onnx_fp32"]["latency"] = measure_latency(lambda: onnx_predict_batch(onnx_session_1t, tokenizer, [sample_text]))
     results["onnx_int8"]["latency"] = measure_latency(lambda: onnx_predict_batch(onnx_int8_session_1t, tokenizer, [sample_text]))
 
-    print(f"\n=== Results (CPU, batch=1 latency, n={EVAL_SUBSET_SIZE} eval examples) ===")
-    header = f"{'Variant':<15}{'Accuracy':<10}{'F1':<10}{'Size (MB)':<12}{'p50 (ms)':<10}{'p95 (ms)':<10}"
+    print(f"\n=== Results (CPU, batch=1 latency, n={len(texts)} eval examples) ===")
+    header = f"{'Variant':<15}{'F1 (micro)':<12}{'F1 (macro)':<12}{'Size (MB)':<12}{'p50 (ms)':<10}{'p95 (ms)':<10}"
     print(header)
     for name, r in results.items():
-        print(f"{name:<15}{r['accuracy']:<10.4f}{r['f1']:<10.4f}{r['size_mb']:<12.1f}{r['latency']['p50_ms']:<10.2f}{r['latency']['p95_ms']:<10.2f}")
+        print(f"{name:<15}{r['f1_micro']:<12.4f}{r['f1_macro']:<12.4f}{r['size_mb']:<12.1f}{r['latency']['p50_ms']:<10.2f}{r['latency']['p95_ms']:<10.2f}")
 
     with open("optimization_results.md", "w", encoding="utf-8") as f:
         f.write("# Inference optimization results\n\n")
         f.write(
-            f"CPU-only benchmark. Accuracy/F1 over {EVAL_SUBSET_SIZE} test examples "
+            f"CPU-only benchmark. F1 over the full {len(texts)}-example test set "
             f"(batched, multi-threaded). Latency is single-threaded "
             f"(intra_op_num_threads=1), batch size 1, {LATENCY_RUNS} runs after "
             "10 warmup calls — this matches one request per worker process in "
@@ -178,11 +180,11 @@ def main():
             "thread-pool spawn overhead dominated a batch-1 workload; "
             "single-threading removes that artifact.\n\n"
         )
-        f.write("| Variant | Accuracy | F1 | Size (MB) | p50 latency (ms) | p95 latency (ms) |\n")
+        f.write("| Variant | F1 (micro) | F1 (macro) | Size (MB) | p50 latency (ms) | p95 latency (ms) |\n")
         f.write("|---|---|---|---|---|---|\n")
         labels_map = {"pytorch_fp32": "PyTorch (fp32)", "onnx_fp32": "ONNX Runtime (fp32)", "onnx_int8": "ONNX Runtime (int8, dynamic quantized)"}
         for name, r in results.items():
-            f.write(f"| {labels_map[name]} | {r['accuracy']:.4f} | {r['f1']:.4f} | {r['size_mb']:.1f} | {r['latency']['p50_ms']:.2f} | {r['latency']['p95_ms']:.2f} |\n")
+            f.write(f"| {labels_map[name]} | {r['f1_micro']:.4f} | {r['f1_macro']:.4f} | {r['size_mb']:.1f} | {r['latency']['p50_ms']:.2f} | {r['latency']['p95_ms']:.2f} |\n")
 
     print("\nResults written to optimization_results.md")
 
