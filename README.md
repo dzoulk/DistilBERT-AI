@@ -1,4 +1,4 @@
-# Unfair ToS Clause Detection with DistilBERT
+# ToS Clause Detector
 
 This project fine-tunes DistilBERT to flag unfair clauses in Terms of Service documents, things like forced arbitration, unilateral changes to the contract, or a company reserving the right to remove your content without notice. It compares the model against a classical TF-IDF plus Logistic Regression baseline, and it benchmarks ONNX export with INT8 quantization for CPU inference.
 
